@@ -1,0 +1,482 @@
+DOC info and Player Pseudocode
+==============================
+
+== DOC
+
+The DOC in the IIgs is a multi-channel digital oscillator.  There are
+32 oscillators, operating in pairs.  There is 64k of sound RAM, which holds
+the wavetable.  The oscillators address into soundram and determine what
+sound data to send to the speaker.. the oscillators operate at a set
+frequency.
+
+There are four registers for controlling the DOC.
+
+`$c03c`::
+  Sound Control.  This uses various bits to control the other register modes.
+  Bit 7::: DOC busy flag.  1 - DOC is busy
+  Bit 6::: DOC or SoundRAM access.  0 - DOC
+  Bit 5::: Address auto-increment.  1 - enabled
+  Bit 4::: reserved
+  Bits 3--0::: Master volume, 0 - low, 15 - high
+`$c03d`::
+  Sound Data.  This is used to read and write to and from the DOC and
+  SoundRAM.  If auto-increment is enabled, reading or writing to this register
+  will auto-increment the address register.  Note, when reading, the register
+  lags by one cycle.  You'll need to throw away the first read after modifying
+  the address registers.
+`$c03e`::
+  Address Low.  This is the address into either the DOC or the SoundRAM.
+`$c03f`::
+  Address High.  This is the address into SoundRAM.  When accessing the DOC,
+  only the low byte of the address register is used.
+
+=== DOC Addresses
+
+When in DOC mode, you can modify various settings by setting the low address
+register to various addresses and writing and reading from the data register.
+The following are the various addresses used.
+
+==== Oscillator Interrupt $E0
+
+Contains which oscillator triggered an interrupt.
+
+Bit 7::
+  Interrupt occurred,  1 - yes
+Bits 5--1::
+  Oscillator number that triggered the interrupt
+
+==== Oscillator Enable $E1
+
+The number of oscillators running.  Multiply the number of desired oscillators
+by two, and set.  Any number from 2 to 64 is valid.  2 is the default
+(1 oscillator).
+
+==== A/D Converter $E2
+
+This is the current value of the analog input.
+
+==== Wavetable Size $C0--$DF
+
+Control the size of the wavetable for each oscillator.  $C0 controls
+oscillator 0, $DF controls oscillator 31.
+
+Bits 5--3::
+  Table size.
+    0::: 256
+    1::: 512
+    2::: 1024
+    3::: 2048
+    4::: 4096
+    5::: 8192
+    6::: 16384
+    7::: 32768
+Bits 2--0::
+  Address resolution.  See below for the wavetable address calculation.
+
+==== Oscillator Control $A0--$BF
+
+Control the oscillator behavior.  $A0 is for oscillator 0, $BF is for
+oscillator 31.
+
+Bits 7--4::
+  Which hardware channel to use.
+Bit 3::
+  Interrupt enable, 1 - interrupts enabled
+Bits 2--1::
+  Oscillator mode
+    0::: Free Run.  Starts at beginning of wavetable and repeats same
+        wavetable.  Halts when halt bit is set, or 0 occurs in wavetable.
+    1::: One Shot.  Start at beginning of wavetable, step through once,
+        stop at end of table.
+    2::: Sync.  When even-numbered oscillator starts, the oscillator above
+        it will synchronize and begin simulatenously.
+    3::: Swap.  When even-numbered oscillator reaches end of wavetable,
+        it resetsthe accumulator to 0, sets the halt bit, and clears the
+        halt bit of the oscillator above it.
+Bit 0::
+  Halt bit.  1 - Oscillator is halted.
+
+==== Wavetable Pointers $80--$9F
+
+The start page of each oscillator's wavetable.  Each page is 256 bytes long.
+$80 is the start page of oscillator 0, $9F is the start page of oscillator 31.
+
+==== Oscillator Data $60--$7F
+
+The last byte read fro the wavetable for each oscillator.  $60 is oscillator
+0, $7F is oscillator 31.
+
+==== Volume $40--$5F
+
+The oscillator's volume.  The current wavetable data byte is multiplied
+by the 8-bit volume to obtain the final output level.  $40 is the
+volume for oscillator 0, $5F is for oscillator 31.
+
+==== Frequency High and Low $00--$3F
+
+This is a 16-bit value for each oscillator.  $00 is the low byte of the
+frequency for oscillator 0, $20 is the high byte for oscillator 0.
+
+This determines the speed the wavetable is read from memory.
+
+Output Frequency = F * SR / (2 ^ (17 + RES))
+
+SR = 894.886KHz / (OSC + 2).
+
+RES = Wavetable resolution
+
+F = 16-bit frequency
+
+OSC = number of enabled oscillators
+
+=== Wavetable Address Calculation
+
+Each oscillator has a 24-bit accumulator.  Each time the oscillator
+updates, the 16-bit value from the oscillator's Frequency is added to
+the accumulator.  The result is then passed to a multiplexer to determine
+the final 16-bit SoundRAM address.  The Table Size, Wavetable Pointer, and
+Resolution all determine how the multiplexer works.  Use the following
+table to determine how to calcualte the final address.  The Pointer
+register determines the high bits of the address, the accumulatr determines
+the low bits.
+
+[width="50%",options="header"]
+|==========================
+|Table Size|Resolution|Pointer Reg|Accumulator
+|256|7|P7--P0|A23--A16
+|256|6|P7--P0|A22--A15
+|256|5|P7--P0|A21--A14
+|256|...|...|...
+|256|0|P7--P0|A16--A9
+|512|7|P7--P1|A23--A15
+|512|6|P7--P1|A22--A14
+|512|...|...|...
+|512|0|P7--P1|A16--A8
+|1024|7|P7--P2|A23--A14
+|1024|6|P7--P2|A22--A13
+|1024|...|...|...
+|1024|0|P7--P2|A16--A7
+|2048|7|P7--P3|A23--A13
+|2048|6|P7--P3|A22--A12
+|2048|...|...|...
+|2048|0|P7--P3|A16--A6
+|4096|7|P7--P4|A23--A12
+|4096|6|P7--P4|A22--A11
+|4096|...|...|...
+|4096|0|P7--P4|A16--A5
+|8192|7|P7--P5|A23--A11
+|8192|6|P7--P5|A22--A10
+|8192|...|...|...
+|8192|0|P7--P5|A16--A4
+|16384|7|P7--P6|A23--A10
+|16384|6|P7--P6|A22--A9
+|16384|...|...|...
+|16384|0|P7--P6|A16--A3
+|32768|7|P7|A23--A9
+|32768|6|P7|A22--A8
+|32768|...|...|...
+|32768|0|P7|A16--A2
+|==========================
+
+The 32 oscillators are serviced in sequence.  With all oscillators
+enabled, the DOC takes 38 microseconds to service all 32.  1.2 microseconds
+per oscillator.
+
+== Player
+
+This is pseudocode for the soundsmith music player.  The pseudocode style
+is basically C-style, with 68k-style word notation.
+
+For example:  `music[8].w` means read a little-endian word from the music
+array, starting at byte offset 8.
+
+[source,c]
+----
+// parse the song headers and prep audio
+void initSong() {
+  SNDCTL = CURVOL & 0xf;  // set vol, enable DAC, disable autoinc
+  // reset all oscillators to halt + freerun
+  for (int osc = 0xa0; osc < 0xc0; osc++) {
+    SNDADRL = osc;
+    SNDDAT = 1;  // halt
+  }
+
+  // load wavebank into sound RAM
+  SNDCTL = 0x60;  // enable RAM + autoinc
+  SNDADRL = 0;
+  SNDADRH = 0;  // point to beginning of sound RAM
+  // do all 64k of sound RAM
+  for (int addr = 0; addr < 0x10000; addr++) {
+    SNDDAT = wavebank[addr + 2];  // skip num inst at start of wavebank
+  }
+  playing = false;
+
+  SNDINT = 0x945c;  // = jsr $00/945c, this is soundInt()
+  SNDINTH = 0x003c;  // called whenever a channel stops
+
+  SNDCTL = 0;  // DAC, vol = 0, disable autoinc
+
+  // use oscillator 0 as a timer
+  SNDADRL = 0x0;  // Osc 0 Frequency
+  SNDDAT = 0xfa;
+  SNDADRL = 0x20;  // Osc 0 Frequency Hi
+  SNDDAT = 0;
+  SNDADRL = 0x40;  // Osc 0 Volume
+  SNDDAT = 0;  // mute the timer
+  SNDADRL = 0x80;  // Osc 0 Wavetable ptr
+  SNDDAT = 0;
+  SNDADRL = 0xc0;  // Osc 0 Wavetable size
+  SNDDAT = 0;   // 0 = 256 bytes, 0 res
+
+  SNDADRL = 0xe1;  // Enable oscillators
+  SNDDAT = 0x3c;  // 30 oscillators
+  SNDADRL = 0xa0;  // Osc 0 control
+  SNDDAT = 0x8;  // free run mode + interrupts enabled
+
+  // music + header + blockSize = effects1 table (blockSize bytes long)
+  effects1 = &music + 0x258 + music[6].w;
+  // effects1 + blockSize  = effects2 table (blockSize bytes long)
+  effects2 = effects1 + music[6].w;
+  // effects2 + blockSize = stereo table (16 words long)
+  stereoTable = effects2 + music[6].w;
+
+  // load instrument headers
+  int pos = 0;
+  numInst = wavebank[0] & 0xff;
+  for (inst = 0; inst < numInst; inst++) {
+    for (int i = 0; i < 12; i++) {
+      instdef[inst * 12 + i] = wavebank[0x10022 + pos++];
+    }
+    pos += 0x50;
+  }
+  // load compact table
+  for (int y = 0; y < 0x20; y++) {
+    compactTable[y] = wavebank[0x1005e + pos++];
+  }
+}
+
+// start playing the song
+void playSong() {
+  timer = 0;
+  songLen = music[0x1d6];
+  curRow = 0;
+  curPattern = 0;
+  rowOffset = music[0x1d8] * 64 * 14;
+  tempo = music[8].w;
+
+  int pos = 0;
+  for (int i = 0; i < 0x1e; i += 2) {
+    volumeTable[i].w = music[0x2c + pos].w;
+    pos += 0x1e;
+  }
+  playing = true;
+}
+
+// this is called whenever an oscillator halts with interrupts enabled
+void soundInt() {
+  SNDCTL &= 0x9f;  // doc, no auto inc
+  SNDADRL = 0xe0;  // oscillator interrupt
+  SNDDAT &= 0x7f;  // clear interrupt
+  uint8_t osc = (SNDDAT & 0x3e) >> 1;  // get fired oscillator
+  if (osc != 0) {  // wasn't timer
+    SNDADRL = 0xa0 + osc;  // osc control
+    if (SNDDAT & 8) {  // were interrupts enabled?
+      SNDDAT &= 0xfe;  // clear halt bit.. retrig
+    }
+    return;
+  }
+
+  if (!playing)
+    return;
+  timer++;
+  if (timer == tempo) {
+    timer = 0;
+    for (oscillator = 0; oscillator < 0xe; oscillator++) {
+      semitone = music[0x258 + rowOffset];
+      if (semitone == 0 || semitone >= 0x80) {
+        rowOffset++;
+        if (semitone == 0x80) {
+          SNDCTL &= 0x9f;  // DAC mode
+          oscaddr = (oscillator + 1) * 2;
+          SNDADRL = 0xa0 + oscaddr;  // osc control
+          SNDDAT = 1;  // halt
+          SNDADRL = 0xa0 + oscaddr + 1;  // osc control
+          SNDDAT = 1;  // halt pair
+        } else if (semitone == 0x81) {
+          curRow = 0x3f;
+        }
+      } else {
+        uint8_t fx = effects1[rowOffset];
+        uint8_t inst = fx & 0xf0;
+        if (!inst)
+          inst = prevInst[oscillator];
+        prevInst[oscillator] = inst;
+        volumeInt = volumeTable[((inst >> 4) - 1) * 2].w / 2;
+        fx &= 0xf;
+        if (fx == 0) {
+          arpeggio[oscillator] = effects2[rowOffset];
+          arpTone[oscillator] = semitone;
+        } else {
+          arpeggio[oscillator] = 0;
+          if (fx == 3) {
+            volumeInt = effects2[rowOffset] / 2;
+          } else if (fx == 6) {
+            volumeInt -= effects2[rowOffset] / 2;
+            if (volumeInt < 0)
+              volumeInt = 0;
+          } else if (fx == 5) {
+            volumeInt += effects2[rowOffset] / 2;
+            if (volumeInt >= 0x80)
+              volumeInt = 0x7f;
+          } else if (fx == 0xf) {
+            tempo = effects2[rowOffset];
+          }
+          if ((fx == 3 || fx == 5 || fx == 6) && semitone == 0) {
+            while (SNDCTL & 0x80);  // wait for DOC
+            SNDCTL = (SNDCTL | 0x20) & 0xbf;  // DOC + autoinc
+            SNDADRL = 0x40 + (oscillator + 1) * 2;  // osc volume
+            SNDDAT = volumeInt;
+            SNDDAT = volumeInt;  // pair
+          }
+        }
+
+        if (semitone) {
+          oscaddr = (oscillator + 1) * 2;
+          SNDCTL &= 0x9f;  // DOC mode
+          SNDADRL = 0xa0 + oscaddr;  // osc ctl
+          SNDDAT = (SNDDAT & 0xf7) | 1;  // halt, no interrupt
+          SNDADRL = 0xa0 + oscaddr + 1;  // osc ctl pair
+          SNDDAT = (SNDDAT & 0xf7) | 1;  // halt, no interrupt pair
+          inst = (prevInst[oscillator] >> 4) - 1;
+          if (inst < numInst) {
+            int x = inst * 12;
+            while (instruments[x].b < semitone) {
+              x += 6;
+            }
+            oscAptr = instruments[x + 1].b;
+            oscAsiz = instruments[x + 2].b;
+            oscActl = instruments[x + 3].b;
+            if (stereo) {
+              oscActl &= 0xf;
+              if (stereoTable[oscillator * 2])
+                oscActl |= 0x10;
+            }
+            while (instruments[x].b != 0x7f) {
+              x += 6;
+            }
+            x += 6;  // skip last instdef
+            while (instruments[x] < semitone) {
+              x += 6;
+            }
+            oscBptr = instruments[x + 1].b;
+            oscBsiz = instruments[x + 2].b;
+            oscBctl = instruments[x + 3].b;
+            if (stereo) {
+              oscBctl &= 0xf;
+              if (stereoTable[oscillator * 2])
+                oscBctl |= 0x10;
+            }
+            freq = freqTable[semitone * 2].w >> compactTable[inst * 2].w;
+            while (SNDCTL & 0x80);  // wait for DOC
+            SNDCTL = (SNDCTL | 0x20) & 0xbf;  // DOC + autoinc
+            SNDADRL = oscaddr;  // osc freq lo
+            SNDDAT = freq;
+            SNDDAT = freq;  // pair
+            SNDADRL = 0x20 + oscaddr;  // osc freq hi
+            SNDDAT = freq >> 8;
+            SNDDAT = freq >> 8;  // pair
+            SNDADRL = 0x40 + oscaddr;  // osc volume
+            SNDDAT = volumeConversion[volumeInt];
+            SNDDAT = volumeConversion[volumeInt];  // pair
+            SNDADRL = 0x80 + oscaddr;  // osc wavetable ptr
+            SNDDAT = oscAptr;
+            SNDDAT = oscBptr;  // pair
+            SNDADRL = 0xc0 + oscaddr;  // osc wavetable size
+            SNDDAT = oscAsiz;
+            SNDDAT = oscBsiz;  // pair
+            SNDADRL = 0xa0 + oscaddr; // osc ctl
+            SNDDAT = oscActl;
+            SNDDAT = oscBctl;  // pair
+          }
+        }
+        rowOffset++;
+      }
+    }
+    curRow++;
+    if (curRow < 0x40)
+      return;
+    // advance pattern
+    curRow = 0;
+    curPattern++;
+    if (curPattern < songLen) {
+      rowOffset = music[0x1d8 + curPattern] * 64 * 14;
+    } else {  // stopped
+      playing = false;
+    }
+    return;
+  } else {  // between notes.. apply arpeggios
+    for (oscillator = 0; oscillator < 0xe; oscillator++) {
+      if (arpeggio[oscillator]) {
+        switch (timer % 6) {
+          case 1: case 4:
+            arpTone[oscillator] += arpeggio[oscillator] >> 4;
+            break;
+          case 2: case 5:
+            arpTone[oscillator] += arpeggio[oscillator] & 0xf;
+            break;
+          case 0: case 3:
+            arpTone[oscillator] -= arpeggio[oscillator] >> 4;
+            arpTone[oscillator] -= arpeggio[oscillator] & 0xf;
+            break;
+        }
+        freq = freqTable[arpTone[oscillator] * 2].w >> compactTable[oscillator *
+2].w;
+        oscaddr = (oscillator + 1) * 2;
+        while (SNDCTL & 0x80);  // wait for DOC
+        SNDCTL = (SNDCTL | 0x20) & 0xbf;  // DOC + autoinc
+        SNDADRL = oscaddr;  // freq lo
+        SNDDAT = freq;
+        SNDDAT = freq;  // pair
+        SNDADRL = 0x20 + oscaddr;  // freq hi
+        SNDDAT = freq >> 8;
+        SNDDAT = freq >> 8;  // pair
+      }
+    }
+  }
+}
+
+uint8_t volumeConversion[] = {
+  0x00, 0x02, 0x04, 0x05, 0x06, 0x07, 0x09, 0x0a,  // 0
+  0x0c, 0x0d, 0x0f, 0x10, 0x12, 0x13, 0x15, 0x16,  // 8
+  0x18, 0x19, 0x1b, 0x1c, 0x1e, 0x1f, 0x21, 0x22,  // 10
+  0x24, 0x25, 0x27, 0x28, 0x2a, 0x2b, 0x2d, 0x2e,  // 18
+  0x30, 0x31, 0x33, 0x34, 0x36, 0x37, 0x39, 0x3a,  // 20
+  0x3c, 0x3d, 0x3f, 0x40, 0x42, 0x43, 0x45, 0x46,  // 28
+  0x48, 0x49, 0x4b, 0x4c, 0x4e, 0x4f, 0x51, 0x52,  // 30
+  0x54, 0x55, 0x57, 0x58, 0x5a, 0x5b, 0x5d, 0x5e,  // 38
+  0x60, 0x61, 0x63, 0x64, 0x66, 0x67, 0x69, 0x6a,  // 40
+  0x6c, 0x6d, 0x6f, 0x70, 0x72, 0x73, 0x75, 0x76,  // 48
+  0x78, 0x79, 0x7b, 0x7c, 0x7e, 0x7f, 0x81, 0x82,  // 50
+  0x84, 0x85, 0x87, 0x88, 0x8a, 0x8b, 0x8d, 0x8e,  // 58
+  0x90, 0x91, 0x93, 0x94, 0x96, 0x97, 0x99, 0x9a,  // 60
+  0x9c, 0x9d, 0x9f, 0xa0, 0xa2, 0xa3, 0xa5, 0xa6,  // 68
+  0xa8, 0xa9, 0xab, 0xac, 0xae, 0xaf, 0xb1, 0xb2,  // 70
+  0xb4, 0xb5, 0xb7, 0xb8, 0xba, 0xbb, 0xbe, 0xc0  // 78
+};
+uint16_t freqTable[] = {
+  0x0000, 0x0016, 0x0017, 0x0018, 0x001a, 0x001b, 0x001d, 0x001e,
+  0x0020, 0x0022, 0x0024, 0x0026, 0x0029, 0x002b, 0x002e, 0x0031,
+  0x0033, 0x0036, 0x003a, 0x003d, 0x0041, 0x0045, 0x0049, 0x004d,
+  0x0052, 0x0056, 0x005c, 0x0061, 0x0067, 0x006d, 0x0073, 0x007a,
+  0x0081, 0x0089, 0x0091, 0x009a, 0x00a3, 0x00ad, 0x00b7, 0x00c2,
+  0x00ce, 0x00d9, 0x00e6, 0x00f4, 0x0102, 0x0112, 0x0122, 0x0133,
+  0x0146, 0x015a, 0x016f, 0x0184, 0x019b, 0x01b4, 0x01ce, 0x01e9,
+  0x0206, 0x0225, 0x0246, 0x0269, 0x028d, 0x02b4, 0x02dd, 0x0309,
+  0x0337, 0x0368, 0x039c, 0x03d3, 0x040d, 0x044a, 0x048c, 0x04d1,
+  0x051a, 0x0568, 0x05ba, 0x0611, 0x066e, 0x06d0, 0x0737, 0x07a5,
+  0x081a, 0x0895, 0x0918, 0x09a2, 0x0a35, 0x0ad0, 0x0b75, 0x0c23,
+  0x0cdc, 0x0d9f, 0x0e6f, 0x0f4b, 0x1033, 0x112a, 0x122f, 0x1344,
+  0x1469, 0x15a0, 0x16e9, 0x1846, 0x19b7, 0x1b3f, 0x1cde, 0x1e95,
+  0x2066, 0x2254, 0x245e, 0x2688
+};
+----

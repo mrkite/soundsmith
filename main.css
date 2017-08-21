@@ -1,0 +1,47 @@
+body {
+  background: #444;
+  color: #898;
+  margin: 0;
+  padding: 0;
+}
+h2 {
+  font-family: sans-serif;
+  font-variant: small-caps;
+  background: #898;
+  color: #000;
+  padding-left: 1em;
+}
+h3 {
+  font-family: sans-serif;
+  padding-top: 1em;
+  padding-left: 1em;
+  margin: 0;
+}
+p {
+  font-family: sans-serif;
+  padding-left: 1em;
+  max-width: 80ch;
+}
+div {
+  font-family: sans-serif;
+  padding-left: 1em;
+}
+a {
+  text-decoration: none;
+  font-weight: bold;
+  color: #cdc;
+  cursor: pointer;
+}
+button {
+  border: 3px double #898;
+  background: #222;
+  color: #898;
+}
+#songlist div {
+  padding: 0;
+  cursor: pointer;
+}
+#songlist div:hover {
+  background: #888;
+  color: #cdc;
+}

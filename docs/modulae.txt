@@ -1,0 +1,122 @@
+Extracting music from Modulae
+=============================
+
+This is a walkthrough for how I located and extracted the music from FTA's
+Modulae demo, straight from the 2mg disk image.
+
+We'll begin by disassembling the boot block.  The boot block is the first
+block on disk, and is always loaded into `$0800`.
+
+[source,shell]
+----
+./disasm modulae.2mg 800 0 1 > boot.s
+----
+
+This command says to extract one 512-byte block starting at block 0, into memory
+location `$800` and disassemble it.
+
+If we analyze the disassembled boot block, we will see that the function at
+`$08f9` loads a block from disk.  Following that backward, we discover that
+at `$08c9`, it loads blocks 7--13 into RAM starting at `$9400`.  Then it
+calls a function at `$0a00` and passes it the address of the RAM it just loaded.
+
+Blocks 7--13 contain the main loader, it's a routine responsible for
+loading the rest of the disk into various parts of RAM.  The call to
+`$0a00` decrunches the loader.  To help with that, I built a tool that can
+properly decrunch those blocks.
+
+[source,shell]
+----
+./decrunch modulae.2mg 7 6 loader
+----
+
+This basically extracts 6 blocks from the disk image, starting at block 7.  It
+decrunches them, and saves the result into a file called `loader`.
+
+Now we can disassemble the loader.
+
+[source,shell]
+----
+./disasm loader 9400 > loader.s
+----
+
+The `disasm` command will disassemble the entire file if the offset and size
+arguements are omitted.  It also will work on a byte-level if the file passed
+isn't a 2mg disk image.
+
+We remember from the previous disassembly that these blocks should be
+loaded into RAM at `$9400`, so we pass that address to `disasm`.
+
+Now we inspect the loader disassembly.  After a bit of inspection, we can
+see that the main loading is done at `$9ad6`.  It uses a table of addresses
+located at `$9bad` to determine which blocks to load and where in RAM to put
+them.  It then later runs the decruncher (still at `$0a00`) on various blocks
+of RAM.
+
+This table is the thing we care about.  The first word is the starting
+block on disk, which is followed by a bunch of 8-byte records.  The first
+dword of each record is the target address, the second dword is the number
+of 256-byte pages to load.  It loads these sequentially from the disk,
+beginning at the starting block.  It ends when a record is 0 pages long.
+
+I built a `dumptbl` tool that makes it easier to parse this table into
+human readable format, telling us which blocks to load and where.  We can
+then choose to inspect the various blocks, one by one and determine which
+ones we care about.
+
+The table we want to dump is at `$9bad`, we need to calculate that
+position relative to the start of the file to determine its disk offset.
+
+----
+$9bad - $9400 = $07ad
+----
+
+Thus, we call `dumptbl` with the following:
+
+[source,shell]
+----
+./dumptbl loader 7ad
+----
+
+(Note how we pass `loader` which is the unpacked binary, and not
+`loader.s` which is the disassembly).
+
+Using this table, we can inspect various blocks.
+
+The very first entry in the table is actually interesting.  It consists of
+58 blocks, starting at block 16 on disk, uncrunched.  If we look at this
+data, it's actually the ``And now, FTA Presents...'' raw audio data.
+It's stored as an unsigned 8-bit PCM data.  It's in mono, and should
+be played back at 11,025 Hz.  I went ahead and slapped a `.wav` header
+onto the audio data to save it for posterity.  You'll find it in the
+songs/modulae folder.
+
+I also found a music player.  Starting at block 801, 27 blocks are loaded
+into `$1000`.
+
+The music player uses a wavebank loaded into `$9:0000`, and music data at
+`$a:0400`.  Sure enough, we can find those blocks in the table used by the main
+loader.  The music data is crunched, the sound data isn't.
+
+[source,shell]
+----
+./decrunch modulae.2mg 828 130 intro.wb raw
+./decrunch modulae.2mg 958 5 intro.song
+----
+
+Now, there should technically be two different music files in Modulae.  One
+for the intro, and the other for the main demo.  The music player doesn't
+seem to reference them, so I'm guessing a *second* music player is actually loaded
+at another point.  Instead of hunting for it, I decide to check the entries
+of the main loader.  Sure enough, I find another song and wavebank.
+
+[source,shell]
+----
+./decrunch modulae.2mg 189 133 demo.wb raw
+./decrunch modulae.2mg 162 27 demo.song
+----
+
+And thus we have both songs extracted.  The final step is to trim off the
+excess padding.  Since the songs are padded to block boundaries, they have
+useless extra padding at the end.  `trimwb` and `trimmusic` will calculate the
+proper length of the wavebank and song files and output trimmed down versions.

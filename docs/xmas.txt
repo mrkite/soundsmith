@@ -1,0 +1,209 @@
+Extracting music from the Xmas demo
+===================================
+
+This is very similar to the documentation on extracting music from Modulae.
+The steps are a little more involved since the Xmas demo is a multi-part
+demo, where the code and music for each part is loaded from disk separately.
+
+As with Modulae, we'll start with extracting the initial boot loader.
+
+[source,shell]
+----
+./disasm xmasdemo.2mg 800 0 1 > boot.s
+----
+
+This time, the loading starts at `$08e3`.  It loads blocks 7--17 into
+RAM starting at `$9000` and then calls the decrunch routine at `$0a00`.
+
+We'll do the same to extract the main loader.
+
+[source,shell]
+----
+./decrunch xmasdemo.2mg 7 11 loader
+./disasm loader 9000 > loader.s
+----
+
+Again, we track down the loading routine.  This time, it's a function
+located at `$9c3f`.  It gets called multiple times, to load the different
+parts of the demo.  The `A` register holds the address of the table to use
+when loading.
+
+The first time the loader is called, it uses the table at `$9ac3`.  This
+table only contains the loading screen graphics.  So we'll ignore it.
+
+== Loading... Music
+
+The second time the loader is called, it uses the table at `$9ad5`.
+We'll extract the table offsets as we did in the Modulae example.  Using
+the relative address of the table from the start of the loader file.
+
+[source,shell]
+----
+./dumptbl loader ad5
+----
+
+We can see a huge chunk of data that is loaded into `$e:9000`.  We'll
+go ahead and disassemble it and look for the music player.
+
+[source,shell]
+----
+./decrunch xmasdemo.2mg 47 92 loading
+./disasm loading e9000 > loading.s
+----
+
+Most of the loading disassembly is actually noise because we disassembled
+data.. but we know from the loader that after this block of data is loaded
+and decrunched, it calls `$f:f000`.  We can use that to follow the code
+flow and inspect the music player.
+
+We see that the music player is slightly different from the standard
+soundsmith music player.  The timer runs on the last channel instead of the
+first channel, and the tempo sets the timer frequency based on a lookup
+table.  Neither of things really matter, they're just used to lighten the CPU
+load a bit.
+
+We discover the music starts at `$e:9000` and the wavebank starts at `$e:e700`.
+We'll use the trim functions to extract the data into separate files.
+
+[source,shell]
+----
+./trimmusic loading 0 loading.song
+./trimwb loading 5700 loading.wb
+----
+
+== Main Menu Music
+
+The next time the loader is called, it uses the table at `$9ae7`.
+
+[source,shell]
+----
+./dumptbl loader ae7
+----
+
+We hunt for the music player, and discover it.  We also discover that
+the music and wavebank are again combined into a giant block of data.
+
+[source,shell]
+----
+./decrunch xmasdemo.2mg 139 122 main
+./trimmusic main 0 main.song
+./trimwb main 9600 main.wb
+----
+
+After the main menu, the different parts of the demo are selectable by the
+user.  Making a selection causes the loader to load a unique table which
+contains the graphics and the music and a different music player.
+
+The process is pretty much the same for each section.  We look at the
+table, we track down the music player, we use that to determine where
+the music and wavetables are.
+
+I'll just summarize each section from here-on out since the process is the
+same for each.  I will include the dumptbl command for each, though,
+so you can see the block table for each section.
+
+== Section 1 Music
+
+The music and wavebanks are combined again, and loaded into `$7:0000`.
+
+[source,shell]
+----
+./dumptbl loader b09
+./decrunch xmasdemo.2mg 393 135 section1
+./trimmusic section1 0 section1.song
+./trimwb section1 a000 section1.wb
+----
+
+== Section 2 Music
+
+The music is loaded into `$5:0000`, the wavebank is loaded into `$3:0000`
+and not crunched.
+
+[source,shell]
+----
+./dumptbl loader b4d
+./decrunch xmasdemo.2mg 682 67 section2.song
+./decrunch xmasdemo.2mg 749 131 section2.wb raw
+----
+
+You can pass the song and wavebank back through the trim functions to
+trim off the padding.
+
+== Section 3 Music
+
+The music and wavebank are combined again, and loaded into `$c:0000`.
+The music doesn't sound quite right, so I'm thinking it may be patched
+elsewhere.
+
+[source,shell]
+----
+./dumptbl loader b2b
+./decrunch xmasdemo.2mg 538 114 section3
+./trimmusic section3 0 section3.song
+./trimwb section3 8200 section3.wb
+----
+
+== Section 4 Music
+
+The music and wavebank are combined again, loaded into `$7:0000`.
+The loader hot-patches the music just after loading it.  It sets the word at
+`$7:0006` to `$3b80`.  This sets the size of each block to `$3b80`, where
+it was previously `$3b00`.  We'll go ahead and duplicate that patch in
+our extract process.
+
+[source,shell]
+----
+./dumptbl loader b7f
+./decrunch xmasdemo.2mg 915 127 section4
+printf '\x80\x3b' | dd of=section4 bs=1 seek=6 count=2 conv=notrunc
+./trimmusic section4 0 section4.song
+./trimwb section4 b600 section4.wb
+----
+
+== Section 5 Music
+
+Section 5 doesn't have any music.  This is a very strange section too, since
+it does two different things depending on whether or not you have the 3rd
+joystick button held when it launches.  Easter egg?
+
+== Section 6 Music
+
+Section 6 also is missing music, but it does have a sound effect that
+is loaded into `$3:0000`.
+
+== Section 7 Music
+
+The music is loaded into `$4:0000` along with the demo code.  The wavebank
+is loaded into `$3:0000`.  Unfortunately, the wavebank is incomplete for
+some reason, making this music unplayable.  I haven't figured out how the
+demo patches the wavebank.
+
+[source,shell]
+----
+./dumptbl loader bbb
+./decrunch xmasdemo.2mg 1078 103 section7
+./decrunch xmasdemo.2mg 1181 56 section7.wb raw
+./trimmusic section7 10000 section7.song
+----
+
+== Section 8 Music
+
+This one is tricky.  It first loads the table at `$9c1b`, which loads
+uncrunched data into `$2000`.  It then loads the table at `$9c2d` which
+loads more uncrunched data into `$3:0000`.  It then takes `$100` bytes from
+`$2010` and appends them onto the end of the data at `$3:0000`.  Finally, it
+uncrunches the data at `$3:0000`.  So we'll have to do this patch as well.
+
+[source,shell]
+----
+./dumptbl loader c1b
+./decrunch xmasdemo.2mg 24 16 patch raw
+./dumptbl loader c2d
+./decrunch xmasdemo.2mg 1487 113 crunched raw
+dd if=patch of=crunched skip=16 bs=1 count=256 oflag=append conv=notrunc
+./decrunch crunched 0 0 section8
+./trimmusic section8 1000 section8.song
+./trimwb seciton8 7000 section8.wb
+----
+
+And that's all the music in the xmas demo that I can find.

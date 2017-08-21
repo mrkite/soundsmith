@@ -1,0 +1,95 @@
+Nucleus Demo
+============
+
+Unfortunately, the Nucleus demo and Photonix tool do not use the Soundsmith
+format for their music.  Instead they use a proprietary format.  I decided to
+reverse engineer this format as well and make a player for them as well.
+
+We, of course, start with loading the boot block:
+
+[source,shell]
+----
+./disasm nucleus.2mg 800 0 1 > boot.s
+----
+
+Which lets us discover the loader is in blocks 7--b.
+
+[source,shell]
+----
+./disasm nucleus.2mg 9600 7 4 > loader.s
+----
+
+The loader uses a table starting at `$9607`, where the first word is the
+starting block, the second word is the number of blocks, followed by a dword
+loading address.  It repeats until the starting block has the high bit
+set.  Nucleus does not use any compression for its data.
+
+Using this, we discover the music player, which will let us discover where all
+the music data and wavebanks are located.  (It will also be the thing I study
+the most in order to write a player).
+
+[source,shell]
+----
+./disasm nucleus.2mg 81000 333 4 > player.s
+----
+
+The sound player is more akin to MIDI than a tracker.  The songs are broken into
+channels, each channel controlling 4 oscillators.  There aren't any patterns,
+there's just a long list of note frequencies and note lengths for each channel.
+This means each channel has its own play head, only advancing to the next note
+when the note length elapses.  Each channel loops independently as well.
+
+The first time the player initializes, it loads a wavebank from `$4/0000` into
+sound RAM.  Then all future initializations load a wavebank from `$3/0000`.
+This means we have two wavebanks, one for the intro song, and the other for all
+the main songs in the demo.  I use the table from the loader to determine which
+blocks are loaded for each memory location.
+
+[source,shell]
+----
+./decrunch nucleus.2mg 140 128 intro.wb raw
+./decrunch nucleus.2mg 12 128 main.wb raw
+----
+
+The player uses a block of data located at `$8/0300` to determine all sorts of
+information about the songs and their channels.  I'll be calling it `songdefs`.
+
+[source,shell]
+----
+./decrunch nucleus.2mg 268 2 songdefs raw
+----
+
+This file is divided into chunks.  Each chunk is 256 bytes long, and contains
+information about a song.  So the first chunk contains information about the
+intro song.  The second chunk contains information about the first main song,
+and so on.  Using this we can determine there is 1 intro song, and 3 main songs.
+
+Each chunk contains instrument data for each channel, as well as where in memory
+to find the note data for that song, as well has the playback speed.
+
+The word at offset `$44` in the chunk determines where the note
+data for that specific song is located, inside bank 8.  Using this we can
+extract the note data for all the songs.
+
+[source,shell]
+----
+./decrunch nucleus.2mg 284 8 intro.song raw
+./decrunch nucleus.2mg 270 14 main1.song raw
+./decrunch nucleus.2mg 292 7 main2.song raw
+./decrunch nucleus.2mg 299 2 main3.song raw
+----
+
+I'll also divide up the songdefs file to provide easy access to each song's
+instrument data.
+
+[source,shell]
+----
+dd if=songdefs bs=256 skip=0 count=1 of=intro.inst
+dd if=songdefs bs=256 skip=1 count=1 of=main1.inst
+dd if=songdefs bs=256 skip=2 count=1 of=main2.inst
+dd if=songdefs bs=256 skip=3 count=1 of=main3.inst
+----
+
+And that's all there is to it.
+
+Photonix was extracted in a similar way.
