@@ -85,9 +85,12 @@ class Player {
 
   public play(): void {
     try {
-      this.ctx = new AudioContext();
+      this.ctx = new ((<any>window).AudioContext || (<any>window).webkitAudioContext)();
+      if (this.ctx == undefined) {
+        throw new Error("No audio support!");
+      }
     } catch (e) {
-      alert('No audio support');
+      alert(e.message);
       return;
     }
     this.audioNode = this.ctx.createScriptProcessor(0, 0, 2);
